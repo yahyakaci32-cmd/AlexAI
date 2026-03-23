@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>let currentMode = 'text';
+let chatHistory = []; // لحفظ المحادثات
+
+// تحميل المحادثات من Local Storage عند بدء التشغيل
+document.addEventListener('DOMContentLoaded', () => {
+    const savedChat = localStorage.getItem('alexChatHistory');
+    if (savedChat) {
+        chatHistory = JSON.parse(savedChat);
+        chatHistory.forEach(msg => {
+            if (msg.role === 'user' || msg.type === 'text') {
+                appendMessage(msg.role, msg.content, false); // false لمنع الحفظ مجدداً
+            } else if (msg.type === 'image') {
+                appendImage(msg.content, false); // false لمنع الحفظ مجدداً
+            }
+        });
+    }
+    setMode('text'); // الوضع الافتراضي عند التحميل
+});
+
+
+function setMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-selector button').forEach(btn => btn.classList.remove('active-mode'));
+    document.getElementById(`btn-${mode}`).classList.add('active-mode');
+    
+    const imageOptionsDiv = document.getElementById('image-options');
+    if (mode === 'image') {
+        imageOptionsDiv.style.display = 'flex';
+        document.getElementById('user-input').placeholder = "صف الصورة التي تريدها لـ Alex يرسمها (FLUX)...";
+    } else {
+        imageOptionsDiv.style.display = 'none';
+        document.getElementById('user-input').placeholder = "تحدث مع Alex أو اطلب كود برمجي...";
+    }
+}
+
+async function sendMessage() {
+    const input = document.getElementById('user-input');
+    const indicator = document.getElementById('typing-indicator');
+    if (!input.value.trim()) return;
+
+    const prompt = input.value;
+    appendMessage('user', prompt, true); // حفظ رسالة المستخدم
+    input.value = '';
+    indicator.style.display = 'block';
+
+    if (currentMode === 'image') {
+        const seed = Math.floor(Math.random() * 1000000);
+        const imgSize = document.getElementById('img-size').value.split('x');
+        const imgWidth = imgSize[0];
+        const imgHeight = imgSize[1];
+        const imgStyle = document.getElementById('img-style').value;
+        const imgQuality = document.getElementById('img-quality').value === 'high' ? '&quality=high' : '';
+
+        let fullPrompt = prompt;
+        if (imgStyle) {
+            fullPrompt = `${imgStyle}, ${prompt}`;
+        }
+
+        const imageUrl = `https://pollinations.ai/p/${encodeURIComponent(fullPrompt)}?width=${imgWidth}&height=${imgHeight}&model=flux&seed=${seed}${imgQuality}`;
+        
+        const img = new Image();
+        img.src = imageUrl;
+        img.onload = () => {
+            appendImage(imageUrl, true); // حفظ الصورة
+            indicator.style.display = 'none';
+        };
+        img.onerror = () => {
+            appendMessage('ai', "عذراً، فشل Alex في توليد الصورة. هل يمكنك وصفها بطريقة أخرى؟ 😔", true);
+            indicator.style.display = 'none';
+        };
+    } else {
+        try {
+            const response = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: prompt })
+            });
+            const data = await response.json();
+            appendMessage('ai', data.reply, true); // حفظ رد Alex
+        } catch (error) {
+            appendMessage('ai', "آسف يا صديقي، حدث خطأ في الاتصال! 😅", true);
+        }
+        indicator.style.display = 'none';
+    }
+}
+
+// دالة إرسال الرسائل (تم تعديلها لدعم زر الصوت وحفظ التاريخ)
+function appendMessage(role, text, save = true) {
+    const history = document.getElementById('chat-history');
+    const div = document.createElement('div');
+    div.className = `message ${role}-message`;
+    div.style.direction = "auto";
+    const name = role === 'ai' ? 'Alex ✨' : 'أنت';
+    
+    let htmlContent = marked.parse(text);
+    
+    if (role === 'ai') {
+        // إضافة زر الصوت
+        htmlContent = `<button class="speak-btn" onclick="speakText(this)">🔊</button>` + htmlContent;
+
+        // إضافة زر النسخ للأكواد
+        htmlContent = htmlContent.replace(/<pre><code/g, 
+            `<div class="code-container"><button class="copy-btn" onclick="copyCode(this)">نسخ الكود 📋</button><pre><code`);
+        htmlContent = htmlContent.replace(/<\/code><\/pre>/g, `</code></pre></div>`);
+    }
+
+    div.innerHTML = `<small style="display:block; opacity:0.5; margin-bottom:5px;">${name}</small>` + htmlContent;
+    history.appendChild(div);
+    history.scrollTop = history.scrollHeight;
+
+    if (save) {
+        chatHistory.push({ role: role, type: 'text', content: text });
+        localStorage.setItem('alexChatHistory', JSON.stringify(chatHistory));
+    }
+}
+
+// دالة إضافة الصور (تم تعديلها لدعم زر التحميل وحفظ التاريخ)
+function appendImage(url, save = true) {
+    const history = document.getElementById('chat-history');
+    const div = document.createElement('div');
+    div.className = `message ai-message`;
+    div.innerHTML = `<small style="display:block; opacity:0.5; margin-bottom:5px;">Alex (الفنان) 🎨</small>
+                     <p>تفضل! هذه الصورة تم إنشاؤها بمحرك FLUX المتطور: 🚀</p>
+                     <img src="${url}" style="width:100%; border-radius:15px; margin-top:10px; cursor:zoom-in;" onclick="window.open('${url}')">
+                     <button class="download-img-btn" onclick="downloadImage('${url}')">تحميل الصورة 💾</button>`;
+    history.appendChild(div);
+    history.scrollTop = history.scrollHeight;
+
+    if (save) {
+        chatHistory.push({ role: 'ai', type: 'image', content: url });
+        localStorage.setItem('alexChatHistory', JSON.stringify(chatHistory));
+    }
+}
+
+
+// دوال الميزات الإضافية
+
+// دالة نسخ الكود
+function copyCode(btn) {
+    const code = btn.nextElementSibling.querySelector('code').innerText; // تعديل بسيط لضمان اختيار الكود الصحيح
+    navigator.clipboard.writeText(code).then(() => {
+        btn.innerText = "تم النسخ! ✅";
+        btn.style.background = "#64ffda";
+        btn.style.color = "#000";
+        setTimeout(() => {
+            btn.innerText = "نسخ الكود 📋";
+            btn.style.background = "rgba(255, 255, 255, 0.1)";
+            btn.style.color = "#fff";
+        }, 2000);
+    });
+}
+
+// دالة قراءة النص بصوت
+function speakText(btn) {
+    const textToSpeak = btn.nextElementSibling.innerText; // النص بعد زر الصوت
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    // يمكنك تعديل اللغة أو الصوت هنا
+    utterance.lang = 'ar-SA'; // للغة العربية السعودية
+    // utterance.voice = window.speechSynthesis.getVoices().find(voice => voice.lang === 'ar-SA'); // اختيار صوت معين
+    window.speechSynthesis.speak(utterance);
+}
+
+// دالة تحميل الصورة
+function downloadImage(imageUrl) {
+    const link = document.createElement('a');
+    link.href = imageUrl;
+    link.download = `Alex_Image_${Date.now()}.png`; // اسم الملف
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+const express = require('express');
+const Groq = require("groq-sdk");
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.static(__dirname));
+
+const groq = new Groq({ apiKey: "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" }); // ضع مفتاحك هنا
+
+app.post('/chat', async (req, res) => {
+    try {
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: "اسمك Alex. أنت مساعد ذكي ومبرمج خبير وفنان بصري. رد باحترافية واستخدم الرموز التعبيرية." },
+                { role: "user", content: req.body.prompt }
+            ],
+            model: "llama-3.3-70b-versatile",
+        });
+        res.json({ reply: chatCompletion.choices[0]?.message?.content || "" });
+    } catch (error) {
+        res.status(500).json({ error: "تعذر الاتصال بـ Alex" });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Alex is live on port ${PORT}`));
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;600&family=Fira+Code&display=swap');
+
+body {
+    margin: 0; font-family: 'IBM Plex Sans Arabic', sans-serif;
+    background: linear-gradient(-45deg, #050505, #1a050d, #050505, #0a0a1a);
+    background-size: 400% 400%;
+    animation: gradientAnimation 15s ease infinite;
+    height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; overflow: hidden;
+}
+
+@keyframes gradientAnimation { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+
+.chat-container {
+    width: 90%; max-width: 700px; background: rgba(255, 255, 255, 0.02);
+    backdrop-filter: blur(30px); border-radius: 25px; border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    margin-top: 20px; /* لترك مساحة لخيارات الصورة */
+}
+
+#chat-history { height: 350px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; padding: 10px; }
+.message { padding: 12px 18px; border-radius: 18px; max-width: 85%; animation: fadeIn 0.3s ease; line-height: 1.7; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; } }
+
+pre { background: #111 !important; padding: 15px; border-radius: 12px; overflow-x: auto; font-family: 'Fira Code', monospace; font-size: 0.9rem; border: 1px solid #333; }
+.user-message { background: rgba(255,255,255,0.08); align-self: flex-start; }
+.ai-message { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); align-self: flex-end; }
+
+.mode-selector { margin-bottom: 20px; display: flex; gap: 10px; }
+.mode-selector button { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 10px 22px; border-radius: 50px; cursor: pointer; transition: 0.3s; }
+.active-mode { background: #fff !important; color: #000 !important; font-weight: bold; box-shadow: 0 0 15px rgba(255,255,255,0.3); }
+
+/* زر النسخ */
+.code-container {
+    position: relative;
+    margin-top: 10px;
+}
+.copy-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px; /* تم تعديل هذا ليناسب RTL */
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: 0.3s;
+    backdrop-filter: blur(5px);
+}
+.copy-btn:hover {
+    background: #64ffda;
+    color: #000;
+}
+
+/* زر الصوت */
+.speak-btn {
+    background: none;
+    border: none;
+    color: #64ffda;
+    cursor: pointer;
+    font-size: 1.2rem;
+    margin-right: 10px;
+    vertical-align: middle;
+}
+.speak-btn:hover {
+    color: white;
+}
+
+/* زر تحميل الصورة */
+.download-img-btn {
+    background: #64ffda;
+    color: #000;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    margin-top: 10px;
+    display: inline-block;
+    transition: 0.3s;
+}
+.download-img-btn:hover {
+    background: white;
+}
+
+.input-area { display: flex; background: rgba(0,0,0,0.3); border-radius: 15px; padding: 8px; margin-top: 15px; border: 1px solid rgba(255,255,255,0.05); }
+input { flex: 1; background: transparent; border: none; color: white; padding: 10px; outline: none; font-size: 1rem; }
+#send-btn { background: #fff; border: none; border-radius: 50%; width: 42px; height: 42px; cursor: pointer; font-weight: bold; }
+#typing-indicator { display: none; font-size: 0.85rem; color: #ffd740; margin: 8px; }
+
+/* خيارات الصور */
+.image-options {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(15px);
+    border-radius: 15px;
+    padding: 15px 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 20px;
+    width: 90%;
+    max-width: 700px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    justify-content: center;
+}
+.image-options h3 {
+    width: 100%;
+    text-align: center;
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #64ffda;
+}
+.image-options label {
+    display: block;
+    margin-bottom: 5px;
+    opacity: 0.8;
+}
+.image-options select {
+    width: 150px;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.4);
+    color: white;
+    font-size: 0.9rem;
+    appearance: none; /* إخفاء سهم الاختيار الافتراضي */
+    background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13.2-5.4H18.6c-5%200-9.3%201.8-13.2%205.4A17.6%2017.6%200%200%200%200%2082.6c0%204.7%201.8%209.3%205.4%2013.2l128%20128c3.9%203.9%208.7%205.8%2013.2%205.8s9.3-1.9%2013.2-5.8l128-128c3.9-3.9%205.8-8.7%205.8-13.2-.1-4.7-1.9-9.3-5.5-13.2z%22%2F%3E%3C%2Fsvg%3E');
+    background-repeat: no-repeat;
+    background-position: left 8px center;
+    background-size: 10px;
+    padding-left: 25px;
+}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alex AI | FLUX Pro</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="header-section">
+        <div class="logo">✦ ALEX NEXT-GEN AI</div>
+        <h1>أهلاً بك في عالمي! ✨</h1>
+        <p class="subtitle">أنا Alex، مبرمجك ومصممك الخاص.</p>
+    </div>
+
+    <div class="mode-selector">
+        <button onclick="setMode('text')" id="btn-text" class="active-mode">💬 محادثة وبرمجة</button>
+        <button onclick="setMode('image')" id="btn-image">🎨 صور FLUX المذهلة</button>
+    </div>
+
+    <div id="image-options" class="image-options" style="display: none;">
+        <h3>خيارات الصورة ⚙️</h3>
+        <label for="img-size">المقاس:</label>
+        <select id="img-size">
+            <option value="1024x1024" selected>مربع (1:1)</option>
+            <option value="1280x720">عريض (16:9)</option>
+            <option value="720x1280">طولي (9:16)</option>
+        </select>
+
+        <label for="img-style">النمط:</label>
+        <select id="img-style">
+            <option value="" selected>تلقائي</option>
+            <option value="photorealistic">واقعي جداً</option>
+            <option value="anime style">أنمي</option>
+            <option value="cartoon style">كرتوني</option>
+            <option value="oil painting style">رسم زيتي</option>
+            <option value="pixel art style">بكسل آرت</option>
+        </select>
+        <label for="img-quality">الجودة:</label>
+        <select id="img-quality">
+            <option value="high" selected>عالية</option>
+            <option value="standard">قياسية</option>
+        </select>
+    </div>
+
+    <div class="chat-container">
+        <div id="chat-history"></div>
+        <div id="typing-indicator">Alex يبدع لك الآن<span class="dots">...</span></div>
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="تحدث مع Alex..." onkeypress="if(event.key === 'Enter') sendMessage()">
+            <button onclick="sendMessage()" id="send-btn">➔</button>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
+{
+  "name": "alex-ai-pro",
+  "version": "1.0.0",
+  "description": "Alex AI Assistant",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "groq-sdk": "^0.3.3",
+    "cors": "^2.8.5",
+    "marked": "^4.3.0"
+  }
+}
